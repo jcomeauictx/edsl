@@ -168,7 +168,7 @@ class Coop(CoopFunctionsMixin):
             self.url = self.url[:-1]
         if "chick.expectedparrot" in self.url:
             self.api_url = "https://chickapi.expectedparrot.com"
-        elif "expectedparrot" in self.url:
+        elif "expectedparrot" in self.url and "dev2" not in self.url:
             self.api_url = "https://api.expectedparrot.com"
         elif "localhost:1234" in self.url:
             self.api_url = "http://localhost:8000"
