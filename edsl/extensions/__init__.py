@@ -56,6 +56,7 @@
 
 # Extension discovery and interaction tools
 from .available_extensions import ServiceFetcher, get_service_definition_by_name
+import os
 
 
 class Extensions:
