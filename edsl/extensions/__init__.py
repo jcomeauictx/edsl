@@ -90,6 +90,7 @@ class Extensions:
         service_def = get_service_definition_by_name(service_name)
         if service_def is None:
             raise ValueError(f"Extension '{service_name}' not found")
+        service_def._ep_api_token = os.environ.get("EXPECTED_PARROT_API_KEY")
         return service_def
 
     def __repr__(self):
