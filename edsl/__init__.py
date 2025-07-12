@@ -4,6 +4,7 @@ EDSL: Experimental Design Specification Language
 EDSL is a Python library for conducting virtual social science experiments, surveys, 
 and interviews with large language models.
 """
+
 import os
 import time
 import importlib
@@ -14,6 +15,8 @@ ROOT_DIR = os.path.dirname(BASE_DIR)
 
 from edsl.__version__ import __version__
 from edsl.config import Config, CONFIG
+
+# NOTE: `ext` is lazily imported below via __getattr__ to avoid circular-import issues.
 
 # Initialize and expose logger
 from edsl import logger
@@ -39,6 +42,7 @@ modules_to_import = [
     "jobs",
     "base",
     "conversation",
+    "extensions",
 ]
 
 # Dynamically import modules and extend __all__
@@ -142,6 +146,15 @@ except Exception as e:
 # Now that all modules are loaded, configure logging from the config
 logger.configure_from_config()
 
+# Import `ext` only after the full EDSL package (including surveys) is initialized
+try:
+    from edsl.extensions import ext as ext  # type: ignore
+
+    globals()["ext"] = ext
+    __all__.append("ext")
+except Exception as _e:
+    # Log but do not fail if extensions cannot be imported (e.g., during partial builds)
+    logger.warning("Failed to import edsl.extensions.ext: %s", _e)
 
 # Installs a custom exception handling routine for edsl exceptions
 from .base.base_exception import BaseException
@@ -150,3 +163,69 @@ BaseException.install_exception_hook()
 
 # Log the total number of items in __all__ for debugging
 logger.debug(f"EDSL initialization complete with {len(__all__)} items in __all__")
+
+
+def check_for_updates(silent: bool = False) -> dict:
+    """
+    Check if there's a newer version of EDSL available.
+
+    Args:
+        silent: If True, don't print any messages to console
+
+    Returns:
+        dict with version info if update is available, None otherwise
+    """
+    from edsl.coop import Coop
+
+    coop = Coop()
+    return coop.check_for_updates(silent=silent)
+
+
+# Add check_for_updates to exports
+__all__.append("check_for_updates")
+
+
+# Perform version check on import (non-blocking)
+def _check_version_on_import():
+    """Check for updates on package import in a non-blocking way."""
+    import threading
+    import os
+
+    # Check if version check is disabled
+    if os.getenv("EDSL_DISABLE_VERSION_CHECK", "").lower() in ["1", "true", "yes"]:
+        return
+
+    # Check if we've already checked recently (within 24 hours)
+    cache_file = os.path.join(os.path.expanduser("~"), ".edsl_version_check")
+    try:
+        if os.path.exists(cache_file):
+            with open(cache_file, "r") as f:
+                last_check = float(f.read().strip())
+                if time.time() - last_check < 86400:  # 24 hours
+                    return
+    except Exception:
+        pass
+
+    def check_in_background():
+        try:
+            # Update cache file
+            with open(cache_file, "w") as f:
+                f.write(str(time.time()))
+
+            # Perform the check
+            from edsl.coop import Coop
+
+            coop = Coop()
+            coop.check_for_updates(silent=False)
+        except Exception:
+            # Silently fail
+            pass
+
+    check_in_background()
+    # # Run in a separate thread to avoid blocking imports
+    # thread = threading.Thread(target=check_in_background, daemon=True)
+    # thread.start()
+
+
+# Run version check on import
+_check_version_on_import()

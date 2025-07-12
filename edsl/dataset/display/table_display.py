@@ -33,7 +33,7 @@ class TableDisplay:
         self,
         headers: Sequence[str],
         data: Sequence[Row],
-        tablefmt: Optional[TableFormat] = None,
+        tablefmt: Optional[TableFormat] = "rich",
         raw_data_set: "Dataset" = None,
         renderer_class: Optional[TableRenderer] = None,
     ):
@@ -88,7 +88,11 @@ class TableDisplay:
                 )
             except Exception:
                 # Even `tabulate` failed – resort to the default __repr__.
-                plain = super().__repr__() if hasattr(super(), "__repr__") else str(self.data)
+                plain = (
+                    super().__repr__()
+                    if hasattr(super(), "__repr__")
+                    else str(self.data)
+                )
 
             # Escape HTML-sensitive chars so the browser renders plain text.
             import html
@@ -99,17 +103,27 @@ class TableDisplay:
     def __repr__(self):
         # If rich format is requested, use RichRenderer
         if self.tablefmt == "rich":
+
             table_data = TableData(
                 headers=self.headers,
                 data=self.data,
                 parameters=self.printing_parameters,
                 raw_data_set=self.raw_data_set,
             )
-            RichRenderer(table_data).render_terminal()
-            return ""  # Return empty string since the table is already printed
+
+            renderer = RichRenderer(table_data)
+
+            # Simply return the Rich-formatted string; a REPL or caller can
+            # decide what to do with it (e.g. the interactive prompt shows the
+            # repr automatically, while an explicit `print()` will emit it
+            # once).  Avoid calling render_terminal() here to prevent double
+            # printing when the caller also prints the returned value.
+
+            return renderer.render_str()
         else:
             # Fall back to tabulate for other formats
             from tabulate import tabulate
+
             return tabulate(self.data, headers=self.headers, tablefmt=self.tablefmt)
 
     @classmethod
@@ -152,6 +166,24 @@ class TableDisplay:
             new_data.extend([[index, k, v] for k, v in zip(self.headers, row)])
         return TableDisplay(
             new_header, new_data, self.tablefmt, renderer_class=self.renderer_class
+        )
+
+    def flip(self) -> "TableDisplay":
+        """Flip the table by transposing columns and rows"""
+        # Create new headers from the first column of data (or indices if no suitable column)
+        new_headers = [str(i) for i in range(len(self.data))]
+        
+        # Transpose the data: each original column becomes a row
+        new_data = []
+        for i, header in enumerate(self.headers):
+            new_row = [header] + [row[i] for row in self.data]
+            new_data.append(new_row)
+        
+        # The new headers include the original column names as the first column
+        new_headers = ["column"] + new_headers
+        
+        return TableDisplay(
+            new_headers, new_data, self.tablefmt, renderer_class=self.renderer_class
         )
 
 

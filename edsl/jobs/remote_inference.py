@@ -1,5 +1,3 @@
-import re
-import math
 from typing import Optional, Union, Literal, TYPE_CHECKING, NewType, Callable, Any
 from dataclasses import dataclass
 from ..coop import CoopServerResponseError
@@ -60,7 +58,15 @@ class JobsRemoteInferenceHandler:
 
         if is_notebook():
             return HTMLTableJobLogger(verbose=self.verbose)
-        return StdOutJobLogger(verbose=self.verbose)
+
+        # Try to use RichTableSimpleJobLogger for terminal environments
+        try:
+            from .rich_table_simple_job_logger import RichTableSimpleJobLogger
+
+            return RichTableSimpleJobLogger(verbose=self.verbose)
+        except ImportError:
+            # Fall back to StdOutJobLogger if rich is not available
+            return StdOutJobLogger(verbose=self.verbose)
 
     def use_remote_inference(self, disable_remote_inference: bool) -> bool:
         import requests
@@ -215,19 +221,30 @@ class JobsRemoteInferenceHandler:
             status=JobsStatus.CANCELLED,
         )
 
+        # Notify logger about job completion
+        if hasattr(job_info.logger, "job_completed"):
+            job_info.logger.job_completed(JobsStatus.CANCELLED)
+
     def _handle_failed_job(
         self, job_info: RemoteJobInfo, remote_job_data: RemoteInferenceResponse
     ) -> None:
         "Handles a failed job by logging the error and updating the job status."
-        error_report_url = remote_job_data.get("latest_job_run_details", {}).get(
-            "error_report_url"
-        )
+        latest_job_run_details = remote_job_data.get("latest_job_run_details", {})
+        error_report_url = latest_job_run_details.get("error_report_url")
 
-        reason = remote_job_data.get("reason")
+        failure_reason = latest_job_run_details.get("failure_reason")
 
-        if reason == "insufficient funds":
+        if failure_reason == "insufficient funds":
+            failure_description = latest_job_run_details.get(
+                "failure_description",
+                "You don't have enough credits to start this job",
+            )
             job_info.logger.update(
-                f"Error: Insufficient balance to start the job. Add funds to your account at the [Credits page]({self.expected_parrot_url}/home/credits)",
+                f"Insufficient funds: {failure_description}.",
+                status=JobsStatus.FAILED,
+            )
+            job_info.logger.update(
+                f"Add funds to your account at the [Credits page]({self.expected_parrot_url}/home/credits).",
                 status=JobsStatus.FAILED,
             )
 
@@ -239,6 +256,10 @@ class JobsRemoteInferenceHandler:
             f"See [Remote Inference page]({self.expected_parrot_url}/home/remote-inference) for more details.",
             status=JobsStatus.FAILED,
         )
+
+        # Notify logger about job completion
+        if hasattr(job_info.logger, "job_completed"):
+            job_info.logger.job_completed(JobsStatus.FAILED)
         job_info.logger.update(
             f"Need support? [Visit Discord]({RemoteJobConstants.DISCORD_URL})",
             status=JobsStatus.FAILED,
@@ -495,11 +516,20 @@ class JobsRemoteInferenceHandler:
                 f"Job completed and Results stored on Coop. [View Results]({results_url})",
                 status=JobsStatus.COMPLETED,
             )
+
+            # Notify logger about job completion
+            if hasattr(job_info.logger, "job_completed"):
+                job_info.logger.job_completed(JobsStatus.COMPLETED)
+
         elif job_status == "partial_failed":
             job_info.logger.update(
                 f"View partial results [here]({results_url})",
                 status=JobsStatus.PARTIALLY_FAILED,
             )
+
+            # Notify logger about job completion
+            if hasattr(job_info.logger, "job_completed"):
+                job_info.logger.job_completed(JobsStatus.PARTIALLY_FAILED)
 
         results.job_uuid = job_info.job_uuid
         results.results_uuid = results_uuid

@@ -99,6 +99,7 @@ class Result(Base, UserDict):
         cache_used_dict: Optional[dict[QuestionName, bool]] = None,
         indices: Optional[dict] = None,
         cache_keys: Optional[dict[QuestionName, str]] = None,
+        validated_dict: Optional[dict[QuestionName, bool]] = None,
     ):
         """Initialize a Result object.
 
@@ -135,6 +136,7 @@ class Result(Base, UserDict):
             "reasoning_summaries_dict": reasoning_summaries_dict or {},
             "cache_used_dict": cache_used_dict or {},
             "cache_keys": cache_keys or {},
+            "validated_dict": validated_dict or {},
         }
         super().__init__(**data)
         self.indices = indices
@@ -247,6 +249,7 @@ class Result(Base, UserDict):
             "question_type": sub_dicts_needing_new_keys["question_type"],
             "cache_used": new_cache_dict,
             "cache_keys": cache_keys,
+            "validated": self.data["validated_dict"],
         }
         if hasattr(self, "indices") and self.indices is not None:
             d["agent"].update({"agent_index": self.indices["agent"]})
@@ -271,6 +274,92 @@ class Result(Base, UserDict):
                     f"Key by itself {key} is problematic. Use the full key {key + '.' + key} name instead."
                 )
         return None
+
+    def transcript(self, format: str = "simple"):
+        """Return the questions and answers in a human-readable transcript.
+
+        Parameters
+        ----------
+        format : str, optional (``'simple'`` or ``'rich'``)
+            ``'simple'`` (default) returns plain-text:
+
+            QUESTION: <question text>
+            OPTIONS: <opt1 / opt2 / ...>   # only when options are available
+            ANSWER:   <answer>
+
+            Each block is separated by a blank line.
+
+            ``'rich'`` uses the *rich* library (if installed) to wrap each Q&A block in a
+            ``Panel`` and returns the coloured/boxed string. Attempting to use the *rich*
+            format without the dependency available raises ``ImportError``.
+        """
+
+        if format not in {"simple", "rich"}:
+            raise ValueError("format must be either 'simple' or 'rich'")
+
+        # Helper to extract question text, options, answer value
+        def _components(q_name):
+            meta = self.question_to_attributes.get(q_name, {})
+            q_text = meta.get("question_text", q_name)
+            options = meta.get("question_options")
+
+            # stringify options if they exist
+            opt_str: str | None
+            if options:
+                if isinstance(options, (list, tuple)):
+                    opt_str = " / ".join(map(str, options))
+                elif isinstance(options, dict):
+                    opt_str = " / ".join(f"{k}: {v}" for k, v in options.items())
+                else:
+                    opt_str = str(options)
+            else:
+                opt_str = None
+
+            ans_val = self.answer[q_name]
+            if not isinstance(ans_val, str):
+                ans_val = str(ans_val)
+
+            return q_text, opt_str, ans_val
+
+        # SIMPLE (plain-text) format -------------------------------------
+        if format == "simple":
+            lines: list[str] = []
+            for q_name in self.answer:
+                q_text, opt_str, ans_val = _components(q_name)
+                lines.append(f"QUESTION: {q_text}")
+                if opt_str is not None:
+                    lines.append(f"OPTIONS: {opt_str}")
+                lines.append(f"ANSWER: {ans_val}")
+                lines.append("")
+
+            if lines and lines[-1] == "":
+                lines.pop()  # trailing blank line
+
+            return "\n".join(lines)
+
+        # RICH format ----------------------------------------------------
+        try:
+            from rich.console import Console
+            from rich.panel import Panel
+        except ImportError as exc:
+            raise ImportError(
+                "The 'rich' package is required for format='rich'. Install it with `pip install rich`."
+            ) from exc
+
+        console = Console()
+        with console.capture() as capture:
+            for q_name in self.answer:
+                q_text, opt_str, ans_val = _components(q_name)
+
+                block_lines = [f"[bold]QUESTION:[/bold] {q_text}"]
+                if opt_str is not None:
+                    block_lines.append(f"[italic]OPTIONS:[/italic] {opt_str}")
+                block_lines.append(f"[bold]ANSWER:[/bold] {ans_val}")
+
+                console.print(Panel("\n".join(block_lines), expand=False))
+                console.print()  # blank line between panels
+
+        return capture.get()
 
     def code(self):
         """Return a string of code that can be used to recreate the Result object."""
@@ -374,13 +463,17 @@ class Result(Base, UserDict):
         d = {}
         problem_keys = []
         data_types = sorted(self.sub_dicts.keys())
+        if "answer" in data_types:
+            data_types.remove("answer")
+            data_types = ["answer"] + data_types
         for data_type in data_types:
             for key in self.sub_dicts[data_type]:
                 if key in d:
                     import warnings
 
                     warnings.warn(
-                        f"Key '{key}' of data type '{data_type}' is already in use. Renaming to {key}_{data_type}"
+                        f"Key '{key}' of data type '{data_type}' is already in use. Renaming to {key}_{data_type}.\n"
+                        f"Conflicting data_type for this key at {d[key]}"
                     )
                     problem_keys.append((key, data_type))
                     key = f"{key}_{data_type}"
@@ -460,7 +553,7 @@ class Result(Base, UserDict):
 
         if hasattr(self, "interview_hash"):
             d["interview_hash"] = self.interview_hash
-            
+
         # Preserve the order attribute if it exists
         if hasattr(self, "order"):
             d["order"] = self.order
@@ -505,14 +598,15 @@ class Result(Base, UserDict):
             cache_used_dict=json_dict.get("cache_used_dict", {}),
             cache_keys=json_dict.get("cache_keys", {}),
             indices=json_dict.get("indices", None),
+            validated_dict=json_dict.get("validated_dict", {}),
         )
         if "interview_hash" in json_dict:
             result.interview_hash = json_dict["interview_hash"]
-            
+
         # Restore the order attribute if it exists in the dictionary
         if "order" in json_dict:
             result.order = json_dict["order"]
-            
+
         return result
 
     def __repr__(self):
@@ -600,13 +694,36 @@ class Result(Base, UserDict):
                 raise ResultsError(f"Parameter {k} not found in Result object")
         return scoring_function(**params)
 
+    def display_transcript(
+        self, show_options: bool = True, show_agent_info: bool = True
+    ) -> None:
+        """Display a rich-formatted chat transcript of the interview.
+
+        This method creates a ChatTranscript object and displays the conversation
+        between questions and agent responses in a beautiful, chat-like format
+        using the Rich library.
+
+        Args:
+            show_options: Whether to display question options if available. Defaults to True.
+            show_agent_info: Whether to show agent information at the top. Defaults to True.
+
+        """
+        from .chat_transcript import ChatTranscript
+
+        chat_transcript = ChatTranscript(self)
+        chat_transcript.view(show_options=show_options, show_agent_info=show_agent_info)
+
     @classmethod
     def from_interview(cls, interview) -> Result:
         """Return a Result object from an interview dictionary, ensuring no reference to the original interview is maintained."""
         # Copy the valid results to avoid maintaining references
-        model_response_objects = list(interview.valid_results) if hasattr(interview, 'valid_results') else []
+        model_response_objects = (
+            list(interview.valid_results) if hasattr(interview, "valid_results") else []
+        )
         # Create a copy of the answers
-        extracted_answers = dict(interview.answers) if hasattr(interview, 'answers') else {}
+        extracted_answers = (
+            dict(interview.answers) if hasattr(interview, "answers") else {}
+        )
 
         def get_question_results(
             model_response_objects,
@@ -623,46 +740,68 @@ class Result(Base, UserDict):
                 cache_keys[result.question_name] = result.cache_key
             return cache_keys
 
-        def get_generated_tokens_dict(answer_key_names) -> dict[str, str]:
+        def get_generated_tokens_dict(
+            answer_key_names, question_results
+        ) -> dict[str, str]:
             generated_tokens_dict = {
                 k + "_generated_tokens": question_results[k].generated_tokens
                 for k in answer_key_names
             }
             return generated_tokens_dict
 
-        def get_comments_dict(answer_key_names) -> dict[str, str]:
+        def get_comments_dict(answer_key_names, question_results) -> dict[str, str]:
             comments_dict = {
                 k + "_comment": question_results[k].comment for k in answer_key_names
             }
             return comments_dict
 
-        def get_reasoning_summaries_dict(answer_key_names) -> dict[str, Any]:
+        def get_reasoning_summaries_dict(
+            answer_key_names, question_results
+        ) -> dict[str, Any]:
             reasoning_summaries_dict = {}
             for k in answer_key_names:
                 reasoning_summary = question_results[k].reasoning_summary
-                
+
                 # If reasoning summary is None but we have a raw model response, try to extract it
-                if reasoning_summary is None and hasattr(question_results[k], 'raw_model_response'):
+                if reasoning_summary is None and hasattr(
+                    question_results[k], "raw_model_response"
+                ):
                     try:
                         # Get the model class to access the reasoning_sequence
-                        model_class = interview.model.__class__ if hasattr(interview, 'model') else None
-                        
-                        if model_class and hasattr(model_class, 'reasoning_sequence'):
-                            from ..language_models.raw_response_handler import RawResponseHandler
-                            
+                        model_class = (
+                            interview.model.__class__
+                            if hasattr(interview, "model")
+                            else None
+                        )
+
+                        if model_class and hasattr(model_class, "reasoning_sequence"):
+                            from ..language_models.raw_response_handler import (
+                                RawResponseHandler,
+                            )
+
                             # Create a handler with the model's reasoning sequence
                             handler = RawResponseHandler(
-                                key_sequence=model_class.key_sequence if hasattr(model_class, 'key_sequence') else None,
-                                usage_sequence=model_class.usage_sequence if hasattr(model_class, 'usage_sequence') else None, 
-                                reasoning_sequence=model_class.reasoning_sequence
+                                key_sequence=(
+                                    model_class.key_sequence
+                                    if hasattr(model_class, "key_sequence")
+                                    else None
+                                ),
+                                usage_sequence=(
+                                    model_class.usage_sequence
+                                    if hasattr(model_class, "usage_sequence")
+                                    else None
+                                ),
+                                reasoning_sequence=model_class.reasoning_sequence,
                             )
-                            
+
                             # Try to extract the reasoning summary
-                            reasoning_summary = handler.get_reasoning_summary(question_results[k].raw_model_response)
+                            reasoning_summary = handler.get_reasoning_summary(
+                                question_results[k].raw_model_response
+                            )
                     except Exception:
                         # If extraction fails, keep it as None
                         pass
-                        
+
                 reasoning_summaries_dict[k + "_reasoning_summary"] = reasoning_summary
             return reasoning_summaries_dict
 
@@ -726,38 +865,74 @@ class Result(Base, UserDict):
 
             return raw_model_results_dictionary, cache_used_dictionary
 
+        def get_validated_dictionary(model_response_objects):
+            validated_dict = {}
+            for result in model_response_objects:
+                validated_dict[f"{result.question_name}_validated"] = result.validated
+            return validated_dict
+
         # Save essential information from the interview before clearing references
-        agent_copy = interview.agent.copy() if hasattr(interview, 'agent') else None
-        scenario_copy = interview.scenario.copy() if hasattr(interview, 'scenario') else None
-        model_copy = interview.model.copy() if hasattr(interview, 'model') else None
-        iteration = interview.iteration if hasattr(interview, 'iteration') else 0
-        survey_copy = interview.survey.copy() if hasattr(interview, 'survey') and interview.survey else None
-        indices_copy = dict(interview.indices) if hasattr(interview, 'indices') and interview.indices else None
-        initial_hash = interview.initial_hash if hasattr(interview, 'initial_hash') else hash(interview)
+        agent_copy = interview.agent.copy() if hasattr(interview, "agent") else None
+        scenario_copy = (
+            interview.scenario.copy() if hasattr(interview, "scenario") else None
+        )
+        model_copy = interview.model.copy() if hasattr(interview, "model") else None
+        iteration = interview.iteration if hasattr(interview, "iteration") else 0
+        survey_copy = (
+            interview.survey.copy()
+            if hasattr(interview, "survey") and interview.survey
+            else None
+        )
+        indices_copy = (
+            dict(interview.indices)
+            if hasattr(interview, "indices") and interview.indices
+            else None
+        )
+        initial_hash = (
+            interview.initial_hash
+            if hasattr(interview, "initial_hash")
+            else hash(interview)
+        )
 
         # Process data to create dictionaries needed for Result
         question_results = get_question_results(model_response_objects)
         answer_key_names = list(question_results.keys())
-        generated_tokens_dict = get_generated_tokens_dict(answer_key_names) if answer_key_names else {}
-        comments_dict = get_comments_dict(answer_key_names) if answer_key_names else {}
-        reasoning_summaries_dict = get_reasoning_summaries_dict(answer_key_names) if answer_key_names else {}
-        
+        generated_tokens_dict = (
+            get_generated_tokens_dict(answer_key_names, question_results)
+            if answer_key_names
+            else {}
+        )
+        comments_dict = (
+            get_comments_dict(answer_key_names, question_results)
+            if answer_key_names
+            else {}
+        )
+        reasoning_summaries_dict = (
+            get_reasoning_summaries_dict(answer_key_names, question_results)
+            if answer_key_names
+            else {}
+        )
+
         # Get answers that are in the question results
         answer_dict = {}
         for k in answer_key_names:
             if k in extracted_answers:
                 answer_dict[k] = extracted_answers[k]
-        
+
         cache_keys = get_cache_keys(model_response_objects)
 
         question_name_to_prompts = get_question_name_to_prompts(model_response_objects)
-        prompt_dictionary = get_prompt_dictionary(
-            answer_key_names, question_name_to_prompts
-        ) if answer_key_names else {}
-        
+        prompt_dictionary = (
+            get_prompt_dictionary(answer_key_names, question_name_to_prompts)
+            if answer_key_names
+            else {}
+        )
+
         raw_model_results_dictionary, cache_used_dictionary = (
             get_raw_model_results_and_cache_used_dictionary(model_response_objects)
         )
+
+        validated_dictionary = get_validated_dictionary(model_response_objects)
 
         # Create the Result object with all copied data
         result = cls(
@@ -775,22 +950,23 @@ class Result(Base, UserDict):
             cache_used_dict=cache_used_dictionary,
             indices=indices_copy,
             cache_keys=cache_keys,
+            validated_dict=validated_dictionary,
         )
-        
+
         # Store only the hash, not the interview
         result.interview_hash = initial_hash
-        
+
         # Clear references to help garbage collection of the interview
-        if hasattr(interview, 'clear_references'):
+        if hasattr(interview, "clear_references"):
             interview.clear_references()
-            
+
         # Clear local references to help with garbage collection
         del model_response_objects
         del extracted_answers
         del question_results
         del answer_key_names
         del question_name_to_prompts
-        
+
         return result
 
 
