@@ -45,12 +45,19 @@ class GoogleService(InferenceServiceABC):
     @classmethod
     def get_model_info(cls):
         """Get raw model info without wrapping in ModelInfo."""
+        import asyncio
+
+        return asyncio.run(cls.async_get_model_info())
+
+    @classmethod
+    async def async_get_model_info(cls):
+        """Async version to get raw model info without wrapping in ModelInfo."""
         api_key = os.environ.get("GOOGLE_API_KEY")
         if not api_key:
             raise ValueError("GOOGLE_API_KEY environment variable not set.")
 
         client = genai.Client(api_key=api_key)
-        response = client.models.list()
+        response = await client.aio.models.list()
         model_list = list(response)
         return model_list
 
@@ -128,7 +135,9 @@ class GoogleService(InferenceServiceABC):
                     )
 
                     # Create the Google AI file reference
-                    gen_ai_file = client.files.get(name=google_file_info["name"])
+                    gen_ai_file = await client.aio.files.get(
+                        name=google_file_info["name"]
+                    )
                     combined_prompt.append(gen_ai_file)
 
                 generation_config = types.GenerateContentConfig(

@@ -298,32 +298,24 @@ class FileStore(Scenario):
         return os.path.getsize(self.path)
 
     def upload_google(self, refresh: bool = False) -> None:
-        from google import genai
-        from google.genai.types import UploadFileConfig
-        import time
+        """Synchronous wrapper for async upload."""
+        import asyncio
 
+        # Create a new event loop if needed
         try:
-            google_api_key = os.getenv("GOOGLE_API_KEY")
-            if google_api_key is None:
-                raise Exception("GOOGLE_API_KEY is not set.")
-            client = genai.Client(api_key=google_api_key)
-            google_file = client.files.upload(
-                file=self.path, config=UploadFileConfig(mime_type=self.mime_type)
+            loop = asyncio.get_running_loop()
+            # If we're already in an async context, we can't use asyncio.run
+            # This would need to be handled differently
+            raise RuntimeError(
+                "upload_google() called from async context. Use async_upload_google() instead."
             )
-            self.external_locations["google"] = google_file.model_dump(mode="json")
-            while True:
-                file_metadata = client.files.get(name=google_file.name)
-                file_state = file_metadata.state
-
-                if file_state == "ACTIVE":  # "ACTIVE":
-                    break
-                elif file_state == "FAILED":  # "FAILED":
-                    break
-                # Add a small delay to prevent busy-wait
-                time.sleep(0.5)
-        except Exception as e:
-            print(f"Error uploading to Google: {e}")
-            raise
+        except RuntimeError:
+            # No running loop, we can use asyncio.run
+            result = asyncio.run(self.async_upload_google(refresh))
+            # async_upload_google returns a dict, but upload_google returns None
+            # Store the result in external_locations as the original did
+            if result:
+                self.external_locations["google"] = result
 
     async def async_upload_google(self, refresh: bool = False) -> dict:
         """
@@ -359,11 +351,8 @@ class FileStore(Scenario):
             loop = asyncio.get_event_loop()
             # Use lambda to properly pass keyword arguments
             print("calling upload in run_in_executor")
-            google_file = await loop.run_in_executor(
-                None,
-                lambda: client.files.upload(
-                    file=self.path, config=UploadFileConfig(mime_type=self.mime_type)
-                ),
+            google_file = await client.aio.files.upload(
+                file=self.path, config=UploadFileConfig(mime_type=self.mime_type)
             )
 
             google_file_dict = google_file.model_dump(mode="json")
@@ -371,10 +360,8 @@ class FileStore(Scenario):
             # Poll for file activation with exponential backoff
             max_attempts = 30
             for attempt in range(max_attempts):
-                # Get file status in executor to avoid blocking
-                file_metadata = await loop.run_in_executor(
-                    None, lambda: client.files.get(name=google_file.name)
-                )
+                # Get file status using async method
+                file_metadata = await client.aio.files.get(name=google_file.name)
                 file_state = file_metadata.state
 
                 if file_state == "ACTIVE":  # "ACTIVE"
