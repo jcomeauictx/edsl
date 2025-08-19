@@ -163,8 +163,9 @@ class GoogleService(InferenceServiceABC):
                         contents=combined_prompt,
                         config=generation_config,
                     )
-
+                    print("Getting response from llm api call")
                 except Exception as e:
+                    print("exception generted by llm api call")
                     return {"message": str(e)}
                 return response.model_dump(mode="json")
 
