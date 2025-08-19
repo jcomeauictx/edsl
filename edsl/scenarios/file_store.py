@@ -350,10 +350,17 @@ class FileStore(Scenario):
             # Upload file (still synchronous but run in executor)
             loop = asyncio.get_event_loop()
             # Use lambda to properly pass keyword arguments
-            print("calling upload in run_in_executor")
+            file_size_bytes = self.size
+            file_size_mb = file_size_bytes / (1024 * 1024)
+            print(
+                f"Starting Google API upload for file {self.name} (size: {file_size_bytes} bytes / {file_size_mb:.2f} MB)"
+            )
+            print(f"About to call client.aio.files.upload...")
+            start_upload = time.time()
             google_file = await client.aio.files.upload(
                 file=self.path, config=UploadFileConfig(mime_type=self.mime_type)
             )
+            print(f"Google API upload completed in {time.time() - start_upload:.2f}s")
 
             google_file_dict = google_file.model_dump(mode="json")
 

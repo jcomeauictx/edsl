@@ -882,6 +882,7 @@ class LanguageModel(
 
         # Calculate cost for the response
         cost = self.cost(response)
+        print("LLM call ended")
         # Return a structured response with metadata
         response = ModelResponse(
             response=response,

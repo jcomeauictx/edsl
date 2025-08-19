@@ -142,8 +142,10 @@ class FileUploadCache:
                     # Use async version of upload if available, otherwise run in executor
 
                     if hasattr(file_store, "async_upload_google"):
+                        file_size_bytes = file_store.size
+                        file_size_mb = file_size_bytes / (1024 * 1024)
                         print(
-                            f"Uploading file {file_store.name} to Google service",
+                            f"Uploading file {file_store.name} to Google service (size: {file_size_bytes} bytes / {file_size_mb:.2f} MB)",
                             file_store,
                         )
                         result = await file_store.async_upload_google()
