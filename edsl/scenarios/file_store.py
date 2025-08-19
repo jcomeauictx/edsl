@@ -358,6 +358,7 @@ class FileStore(Scenario):
             # Upload file (still synchronous but run in executor)
             loop = asyncio.get_event_loop()
             # Use lambda to properly pass keyword arguments
+            print("calling upload in run_in_executor")
             google_file = await loop.run_in_executor(
                 None,
                 lambda: client.files.upload(

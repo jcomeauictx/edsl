@@ -91,7 +91,6 @@ class GoogleService(InferenceServiceABC):
                 system_prompt: str = "",
                 files_list: Optional["Files"] = None,
             ) -> Dict[str, Any]:
-
                 if files_list is None:
                     files_list = []
 
@@ -123,6 +122,7 @@ class GoogleService(InferenceServiceABC):
                 for file in files_list:
                     # Use cache to get or upload the file
                     # This ensures each unique file is only uploaded once
+                    print("calling file check for upload ")
                     google_file_info = await file_upload_cache.get_or_upload(
                         file, service="google"
                     )
@@ -148,7 +148,7 @@ class GoogleService(InferenceServiceABC):
                 )
 
                 try:
-                    # print("Making LLM api call")
+                    print("Making LLM api call")
                     response = await client.aio.models.generate_content(
                         model=self._model_,
                         contents=combined_prompt,
