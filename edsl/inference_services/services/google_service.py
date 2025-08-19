@@ -2,9 +2,12 @@ import os
 from typing import Any, Dict, Optional, TYPE_CHECKING
 from google import genai
 from google.genai import types
+import google
 
 # from ...exceptions.general import MissingAPIKeyError
 from ..inference_service_abc import InferenceServiceABC
+from google.generativeai.types import GenerationConfig
+from google.api_core.exceptions import InvalidArgument
 
 # Use TYPE_CHECKING to avoid circular imports at runtime
 if TYPE_CHECKING:
@@ -85,32 +88,48 @@ class GoogleService(InferenceServiceABC):
             def __init__(self, *args, **kwargs):
                 super().__init__(*args, **kwargs)
 
+            def get_generation_config(self) -> GenerationConfig:
+                return GenerationConfig(
+                    temperature=self.temperature,
+                    top_p=self.topP,
+                    top_k=self.topK,
+                    max_output_tokens=self.maxOutputTokens,
+                    stop_sequences=self.stopSequences,
+                )
+
             async def async_execute_model_call(
                 self,
                 user_prompt: str,
                 system_prompt: str = "",
                 files_list: Optional["Files"] = None,
             ) -> Dict[str, Any]:
+                generation_config = self.get_generation_config()
 
                 if files_list is None:
                     files_list = []
-
-                client = genai.Client(api_key=self.api_token)
-
-                if system_prompt is not None and system_prompt != "":
-                    if self._model_ != "gemini-pro":
-                        system_instruction = system_prompt
-                    else:
+                genai.configure(api_key=self.api_token)
+                if (
+                    system_prompt is not None
+                    and system_prompt != ""
+                    and self._model_ != "gemini-pro"
+                ):
+                    try:
+                        self.generative_model = genai.GenerativeModel(
+                            self._model_,
+                            safety_settings=safety_settings,
+                            system_instruction=system_prompt,
+                        )
+                    except InvalidArgument:
                         print(
                             f"This model, {self._model_}, does not support system_instruction"
                         )
                         print("Will add system_prompt to user_prompt")
                         user_prompt = f"{system_prompt}\n{user_prompt}"
-                        system_instruction = None
                 else:
-                    # No system prompt
-                    system_instruction = None
-
+                    self.generative_model = genai.GenerativeModel(
+                        self._model_,
+                        safety_settings=safety_settings,
+                    )
                 combined_prompt = [user_prompt]
                 import time
 
@@ -128,36 +147,19 @@ class GoogleService(InferenceServiceABC):
                     )
 
                     # Create the Google AI file reference
-                    gen_ai_file = client.files.get(name=google_file_info["name"])
+                    gen_ai_file = google.generativeai.types.file_types.File(
+                        google_file_info
+                    )
                     combined_prompt.append(gen_ai_file)
 
-                generation_config = types.GenerateContentConfig(
-                    temperature=self.temperature,
-                    top_p=self.topP,
-                    top_k=self.topK,
-                    max_output_tokens=self.maxOutputTokens,
-                    stop_sequences=self.stopSequences,
-                    safety_settings=[
-                        types.SafetySetting(
-                            category=setting["category"],
-                            threshold=setting["threshold"],
-                        )
-                        for setting in safety_settings
-                    ],
-                    system_instruction=system_instruction,
-                )
-
                 try:
-                    # print("Making LLM api call")
-                    response = await client.aio.models.generate_content(
-                        model=self._model_,
-                        contents=combined_prompt,
-                        config=generation_config,
+                    response = await self.generative_model.generate_content_async(
+                        combined_prompt, generation_config=generation_config
                     )
 
                 except Exception as e:
                     return {"message": str(e)}
-                return response.model_dump(mode="json")
+                return response.to_dict()
 
         LLM.__name__ = model_name
         return LLM
