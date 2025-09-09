@@ -9,6 +9,8 @@ import signal
 
 from typing import Any
 
+# we need imports from parent directory
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from edsl.config import CONFIG
 from edsl.caching.sql_dict import SQLiteDict
 from edsl.enums import InferenceServiceType
