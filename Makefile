@@ -52,8 +52,8 @@ keys-off: ## Disable API keys by adding # comments to key lines in .env
 	@echo "API keys disabled (commented out in .env)"
 
 install: ## Install all project deps and create a venv (local)
-	make clean-all
 	@echo "Creating a venv from pyproject.toml and installing deps using poetry..."
+	$(MAKE) activated
 	poetry install --with dev
 	@echo "All deps installed and venv created."
 
@@ -103,10 +103,6 @@ model-report: ## Generate a model report
 	echo "Model report generated in model_report.txt"
 
 clean-all: ## Clean everything (including the venv)
-	@if [ -n "$$VIRTUAL_ENV" ]; then \
-		echo "Your virtual environment is active. Please deactivate it."; \
-		exit 1; \
-	fi
 	@echo "Cleaning tempfiles..."
 	@make clean
 	@echo "Cleaning testfiles..."
@@ -304,6 +300,7 @@ github-tests-locally: ## Run tests on GitHub Actions
 	act
 
 test: ## Run regular tests (no Coop tests). Use 'make test DIR' to run tests from specific directory
+	$(MAKE) activated installed
 	make clean-test
 	@if [ -n "$(filter-out $@,$(MAKECMDGOALS))" ]; then \
 		dir="$(filter-out $@,$(MAKECMDGOALS))"; \
@@ -436,3 +433,15 @@ integration-job-running: # DOES NOT WORK!
 
 integration-tricky-questions: # DOES NOT WORK!
 	pytest -v --log-cli-level=INFO integration/test_tricky_questions.py
+.venv:
+	python3 -m venv $@
+activated: .venv
+	if [ -z "$$VIRTUAL_ENV" ]; then \
+		echo You must first activate virtualenv: source .venv/bin/activate >&2; \
+		false; \
+	fi
+installed: .venv
+	if [ ! -e .venv/bin/edsl ]; then \
+		echo You must first install package: make install >&2; \
+		false; \
+	fi
