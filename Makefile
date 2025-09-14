@@ -103,6 +103,10 @@ model-report: ## Generate a model report
 	echo "Model report generated in model_report.txt"
 
 clean-all: ## Clean everything (including the venv)
+	@if [ -n "$$VIRTUAL_ENV" ]; then \
+		echo "Your virtual environment is active. Please deactivate it."; \
+		exit 1; \
+	fi
 	@echo "Cleaning tempfiles..."
 	@make clean
 	@echo "Cleaning testfiles..."
