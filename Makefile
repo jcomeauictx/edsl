@@ -436,5 +436,3 @@ integration-job-running: # DOES NOT WORK!
 
 integration-tricky-questions: # DOES NOT WORK!
 	pytest -v --log-cli-level=INFO integration/test_tricky_questions.py
-import-profile.log:
-	python3 -c "import cProfile; cProfile.run('import edsl')" > $@ 2>&1
