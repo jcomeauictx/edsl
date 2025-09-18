@@ -436,3 +436,7 @@ integration-job-running: # DOES NOT WORK!
 
 integration-tricky-questions: # DOES NOT WORK!
 	pytest -v --log-cli-level=INFO integration/test_tricky_questions.py
+importtime:
+	python3 -X importtime edsl
+shell:
+	bash --init-file .venv/bin/activate
