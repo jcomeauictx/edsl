@@ -440,12 +440,16 @@ integration-tricky-questions: # DOES NOT WORK!
 .venv:
 	python3 -m venv $@
 activated: .venv
-	if [ -z "$$VIRTUAL_ENV" ]; then \
-		echo You must first activate virtualenv: source .venv/bin/activate >&2; \
+	@if [ -z "$$VIRTUAL_ENV" ]; then \
+		echo 'You must first activate virtualenv: `make shell`' >&2; \
 		false; \
 	fi
 installed: .venv
-	if [ ! -e .venv/bin/edsl ]; then \
-		echo You must first install package: make install >&2; \
+	@if [ ! -e .venv/bin/edsl ]; then \
+		echo 'You must first install package: `make install`' >&2; \
 		false; \
 	fi
+importtime: activated installed
+	timeout 5s python3 -X importtime edsl
+shell:
+	bash --init-file .venv/bin/activate
